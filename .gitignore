@@ -3,6 +3,9 @@
 ##
 ## Get latest from `dotnet new gitignore`
 
+# Claude loca settings 
+.claude/settings.local.json
+
 # dotenv files
 .env
 
