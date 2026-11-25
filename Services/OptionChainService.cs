@@ -36,10 +36,10 @@ public class OptionChainService
             expiry, underlyingPrice);
 
         // 1. Get available strikes from the option chain
-        var chain = await _connection.RequestOptionChainAsync("SPX", "IND", SpxConId);
+        OptionChainResult chain = await _connection.RequestOptionChainAsync("SPX", "IND", SpxConId);
 
         // Find the entry matching our trading class (SPXW) and containing our expiry
-        var matchingEntry = chain.Entries
+        OptionChainEntry? matchingEntry = chain.Entries
             .Where(e => e.TradingClass.Equals(_config.TradingClass, StringComparison.OrdinalIgnoreCase))
             .Where(e => e.Expirations.Contains(expiry))
             .FirstOrDefault();
@@ -65,7 +65,7 @@ public class OptionChainService
         double lowerBound = underlyingPrice * (1 - _config.StrikeRangePercent);
         double upperBound = underlyingPrice * (1 + _config.StrikeRangePercent);
 
-        var candidateStrikes = matchingEntry.Strikes
+        List<double> candidateStrikes = matchingEntry.Strikes
             .Where(s => s >= lowerBound && s <= upperBound)
             .OrderBy(s => s)
             .ToList();
@@ -78,16 +78,16 @@ public class OptionChainService
                 $"No strikes found within {_config.StrikeRangePercent:P0} of {underlyingPrice:F2}");
 
         // 3. Separate into put candidates (below price) and call candidates (above price)
-        var putStrikes = candidateStrikes.Where(s => s < underlyingPrice).ToList();
-        var callStrikes = candidateStrikes.Where(s => s > underlyingPrice).ToList();
+        List<double> putStrikes = candidateStrikes.Where(s => s < underlyingPrice).ToList();
+        List<double> callStrikes = candidateStrikes.Where(s => s > underlyingPrice).ToList();
 
         _logger.LogInformation("Put candidates: {PutCount} strikes, Call candidates: {CallCount} strikes",
             putStrikes.Count, callStrikes.Count);
 
         // 4. Request market data for all candidates
-        var putResult = await FindStrikeByDelta(putStrikes, expiry, "P", _config.PutDeltaTarget,
+        (StrikeDelta strike, double mid) putResult = await FindStrikeByDelta(putStrikes, expiry, "P", _config.PutDeltaTarget,
             underlyingPrice, matchingEntry.TradingClass);
-        var callResult = await FindStrikeByDelta(callStrikes, expiry, "C", _config.CallDeltaTarget,
+        (StrikeDelta strike, double mid) callResult = await FindStrikeByDelta(callStrikes, expiry, "C", _config.CallDeltaTarget,
             underlyingPrice, matchingEntry.TradingClass);
 
         _logger.LogInformation("Selected PUT  strike: {Strike:F0} (delta={Delta:F4}, mid={Mid:F2})",
@@ -103,19 +103,19 @@ public class OptionChainService
         double underlyingPrice, string tradingClass)
     {
         // Build contracts for all candidate strikes
-        var contracts = strikes.Select((s, i) => (
+        List<(int id, Contract contract)> contracts = strikes.Select((s, i) => (
             id: i,
             contract: BuildOptionContract(s, expiry, right, tradingClass)
         )).ToList();
 
         // Request market data in batch
-        var mktData = await _connection.RequestMarketDataBatchAsync(contracts);
+        Dictionary<int, MarketDataResult> mktData = await _connection.RequestMarketDataBatchAsync(contracts);
 
         // Find strikes with valid greeks from IB
-        var strikesWithGreeks = new List<(double strike, double delta, double iv, double price, double mid)>();
-        var strikesWithoutGreeks = new List<double>();
+        List<(double strike, double delta, double iv, double price, double mid)> strikesWithGreeks = new List<(double strike, double delta, double iv, double price, double mid)>();
+        List<double> strikesWithoutGreeks = new List<double>();
 
-        foreach (var (id, data) in mktData)
+        foreach ((int id, MarketDataResult data) in mktData)
         {
             double strike = strikes[id];
             if (data.Delta != 0) // Has greeks
@@ -136,7 +136,7 @@ public class OptionChainService
         double bestDiff = double.MaxValue;
 
         // First try IB greeks
-        foreach (var (strike, delta, iv, price, mid) in strikesWithGreeks)
+        foreach ((double strike, double delta, double iv, double price, double mid) in strikesWithGreeks)
         {
             double diff = Math.Abs(delta - targetDelta);
             if (diff < bestDiff)

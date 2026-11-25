@@ -1,4 +1,6 @@
 using Erner.Configuration;
+using Erner.Models;
+using IBApi;
 using Microsoft.Extensions.Logging;
 
 namespace Erner.Services;
@@ -53,9 +55,9 @@ public class TradeOrchestrator
                 _connectionConfig.ClientId);
 
             // 3. Determine next trading day
-            var easternZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
-            var nowEastern = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, easternZone);
-            var nextTradingDay = TradingDayCalculator.GetNextTradingDay(nowEastern.Date);
+            TimeZoneInfo easternZone = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
+            DateTime nowEastern = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, easternZone);
+            DateTime nextTradingDay = TradingDayCalculator.GetNextTradingDay(nowEastern.Date);
             string expiry = nextTradingDay.ToString("yyyyMMdd");
 
             _logger.LogInformation("Target expiry: {Expiry} (next trading day after {Today})",
@@ -63,18 +65,18 @@ public class TradeOrchestrator
 
             // 4. Get underlying price
             _logger.LogInformation("Requesting SPX underlying price...");
-            var indexContract = OptionChainService.BuildIndexContract();
+            Contract indexContract = OptionChainService.BuildIndexContract();
             double underlyingPrice = await _connection.RequestUnderlyingPriceAsync(indexContract);
             _logger.LogInformation("SPX underlying price: {Price:F2}", underlyingPrice);
 
             // 5. Find target delta strikes
-            var (putStrike, callStrike, putMid, callMid) =
+            (StrikeDelta putStrike, StrikeDelta callStrike, double putMid, double callMid) =
                 await _optionChainService.FindTargetStrikesAsync(expiry, underlyingPrice);
 
             // 6. Build the final option contracts
-            var putContract = _optionChainService.BuildOptionContract(
+            Contract putContract = _optionChainService.BuildOptionContract(
                 putStrike.Strike, expiry, "P");
-            var callContract = _optionChainService.BuildOptionContract(
+            Contract callContract = _optionChainService.BuildOptionContract(
                 callStrike.Strike, expiry, "C");
 
             // If mid prices weren't available during delta scan, request them now
@@ -83,12 +85,12 @@ public class TradeOrchestrator
                 _logger.LogInformation("Requesting fresh bid/ask for selected strikes...");
                 if (putMid <= 0)
                 {
-                    var putData = await _connection.RequestMarketDataSnapshotAsync(putContract);
+                    MarketDataResult putData = await _connection.RequestMarketDataSnapshotAsync(putContract);
                     putMid = putData.MidPrice;
                 }
                 if (callMid <= 0)
                 {
-                    var callData = await _connection.RequestMarketDataSnapshotAsync(callContract);
+                    MarketDataResult callData = await _connection.RequestMarketDataSnapshotAsync(callContract);
                     callMid = callData.MidPrice;
                 }
             }
@@ -100,17 +102,17 @@ public class TradeOrchestrator
             _logger.LogInformation("  CALL: {Strike:F0} x{Qty} @ mid ${Mid:F2} ({OrderType})",
                 callStrike.Strike, _tradingConfig.CallContracts, callMid, _tradingConfig.OrderType);
 
-            var putTask = _orderService.SellOptionAsync(
+            Task<TradeResult> putTask = _orderService.SellOptionAsync(
                 putContract, _tradingConfig.PutContracts, putMid, expiry);
-            var callTask = _orderService.SellOptionAsync(
+            Task<TradeResult> callTask = _orderService.SellOptionAsync(
                 callContract, _tradingConfig.CallContracts, callMid, expiry);
 
-            var results = await Task.WhenAll(putTask, callTask);
+            TradeResult[] results = await Task.WhenAll(putTask, callTask);
 
             // 8. Report results
             _logger.LogInformation("=== Trade Summary ===");
             double totalPremium = 0;
-            foreach (var result in results)
+            foreach (TradeResult result in results)
             {
                 string sideLabel = result.Right == "P" ? "PUT " : "CALL";
                 if (result.Status == "Filled")
@@ -141,15 +143,15 @@ public class TradeOrchestrator
 
     private async Task WaitForTradeTimeAsync(CancellationToken ct)
     {
-        if (!TimeSpan.TryParse(_tradingConfig.TradeTimeLocal, out var tradeTime))
+        if (!TimeSpan.TryParse(_tradingConfig.TradeTimeLocal, out TimeSpan tradeTime))
         {
             throw new InvalidOperationException(
                 $"Invalid trade time format: '{_tradingConfig.TradeTimeLocal}'. Expected HH:mm:ss");
         }
 
-        var tradeZone = TimeZoneInfo.FindSystemTimeZoneById(_tradingConfig.TradeTimeZone);
-        var nowInZone = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tradeZone);
-        var targetToday = nowInZone.Date + tradeTime;
+        TimeZoneInfo tradeZone = TimeZoneInfo.FindSystemTimeZoneById(_tradingConfig.TradeTimeZone);
+        DateTime nowInZone = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tradeZone);
+        DateTime targetToday = nowInZone.Date + tradeTime;
 
         // If the target time has already passed today, warn and exit
         if (nowInZone > targetToday)
@@ -160,7 +162,7 @@ public class TradeOrchestrator
             return;
         }
 
-        var waitDuration = targetToday - nowInZone;
+        TimeSpan waitDuration = targetToday - nowInZone;
         _logger.LogInformation(
             "Waiting until {Time} {Zone} ({Duration} from now)...",
             _tradingConfig.TradeTimeLocal, _tradingConfig.TradeTimeZone,
@@ -169,7 +171,7 @@ public class TradeOrchestrator
         // Log countdown periodically
         while (waitDuration.TotalSeconds > 60)
         {
-            var sleepTime = waitDuration.TotalMinutes > 10
+            TimeSpan sleepTime = waitDuration.TotalMinutes > 10
                 ? TimeSpan.FromMinutes(5)
                 : TimeSpan.FromMinutes(1);
 

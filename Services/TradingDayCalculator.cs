@@ -4,7 +4,7 @@ public static class TradingDayCalculator
 {
     public static DateTime GetNextTradingDay(DateTime fromDate)
     {
-        var candidate = fromDate.Date.AddDays(1);
+        DateTime candidate = fromDate.Date.AddDays(1);
         while (!IsTradingDay(candidate))
         {
             candidate = candidate.AddDays(1);
@@ -23,13 +23,13 @@ public static class TradingDayCalculator
 
     public static bool IsMarketHoliday(DateTime date)
     {
-        var holidays = GetHolidaysForYear(date.Year);
+        HashSet<DateTime> holidays = GetHolidaysForYear(date.Year);
         return holidays.Contains(date.Date);
     }
 
     private static HashSet<DateTime> GetHolidaysForYear(int year)
     {
-        var holidays = new HashSet<DateTime>();
+        HashSet<DateTime> holidays = new HashSet<DateTime>();
 
         // New Year's Day - Jan 1 (observed)
         holidays.Add(ObservedDate(new DateTime(year, 1, 1)));
@@ -79,15 +79,15 @@ public static class TradingDayCalculator
 
     private static DateTime NthWeekdayOfMonth(int year, int month, DayOfWeek day, int n)
     {
-        var first = new DateTime(year, month, 1);
-        var offset = ((int)day - (int)first.DayOfWeek + 7) % 7;
+        DateTime first = new DateTime(year, month, 1);
+        int offset = ((int)day - (int)first.DayOfWeek + 7) % 7;
         return first.AddDays(offset + 7 * (n - 1));
     }
 
     private static DateTime LastWeekdayOfMonth(int year, int month, DayOfWeek day)
     {
-        var last = new DateTime(year, month, DateTime.DaysInMonth(year, month));
-        var offset = ((int)last.DayOfWeek - (int)day + 7) % 7;
+        DateTime last = new DateTime(year, month, DateTime.DaysInMonth(year, month));
+        int offset = ((int)last.DayOfWeek - (int)day + 7) % 7;
         return last.AddDays(-offset);
     }
 

@@ -71,7 +71,7 @@ public class IbConnection : EWrapper, IDisposable
         { IsBackground = true, Name = "IB-EReader" };
         _readerThread.Start();
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        using CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
         cts.Token.Register(() => _connectionTcs.TrySetException(
             new TimeoutException($"Connection to IB at {host}:{port} timed out after {timeoutSeconds}s. " +
                 "Verify TWS/Gateway is running and API connections are enabled.")));
@@ -99,17 +99,17 @@ public class IbConnection : EWrapper, IDisposable
     public async Task<OptionChainResult> RequestOptionChainAsync(string symbol, string secType, int underlyingConId, int timeoutSeconds = 30)
     {
         int reqId = GetNextReqId();
-        var collector = new OptionChainCollector();
+        OptionChainCollector collector = new OptionChainCollector();
         _chainRequests[reqId] = collector;
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        using CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
         cts.Token.Register(() => collector.Tcs.TrySetException(
             new TimeoutException($"Option chain request timed out after {timeoutSeconds}s")));
 
         _logger.LogDebug("Requesting option chain for {Symbol} (conId={ConId})", symbol, underlyingConId);
         _clientSocket.reqSecDefOptParams(reqId, symbol, "", secType, underlyingConId);
 
-        var result = await collector.Tcs.Task;
+        OptionChainResult result = await collector.Tcs.Task;
         _chainRequests.TryRemove(reqId, out _);
         return result;
     }
@@ -120,10 +120,10 @@ public class IbConnection : EWrapper, IDisposable
     public async Task<MarketDataResult> RequestMarketDataSnapshotAsync(Contract contract, int timeoutSeconds = 15)
     {
         int reqId = GetNextReqId();
-        var collector = new MarketDataCollector();
+        MarketDataCollector collector = new MarketDataCollector();
         _mktDataRequests[reqId] = collector;
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        using CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
         cts.Token.Register(() =>
         {
             // On timeout, return whatever we have so far rather than throwing
@@ -133,7 +133,7 @@ public class IbConnection : EWrapper, IDisposable
         // Request snapshot market data; genericTickList "106" requests option implied vol
         _clientSocket.reqMktData(reqId, contract, "106", true, false, new List<TagValue>());
 
-        var result = await collector.Tcs.Task;
+        MarketDataResult result = await collector.Tcs.Task;
         _mktDataRequests.TryRemove(reqId, out _);
         return result;
     }
@@ -144,12 +144,12 @@ public class IbConnection : EWrapper, IDisposable
     public async Task<Dictionary<int, MarketDataResult>> RequestMarketDataBatchAsync(
         List<(int id, Contract contract)> contracts, int timeoutSeconds = 30)
     {
-        var tasks = new List<(int id, Task<MarketDataResult> task)>();
+        List<(int id, Task<MarketDataResult> task)> tasks = new List<(int id, Task<MarketDataResult> task)>();
 
-        foreach (var (id, contract) in contracts)
+        foreach ((int id, Contract contract) in contracts)
         {
             int reqId = GetNextReqId();
-            var collector = new MarketDataCollector { ExternalId = id };
+            MarketDataCollector collector = new MarketDataCollector { ExternalId = id };
             _mktDataRequests[reqId] = collector;
 
             _clientSocket.reqMktData(reqId, contract, "106", true, false, new List<TagValue>());
@@ -157,15 +157,15 @@ public class IbConnection : EWrapper, IDisposable
         }
 
         // Wait for all with timeout
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        using CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
         cts.Token.Register(() =>
         {
-            foreach (var kvp in _mktDataRequests)
+            foreach (KeyValuePair<int, MarketDataCollector> kvp in _mktDataRequests)
                 kvp.Value.Tcs.TrySetResult(kvp.Value.Result);
         });
 
-        var results = new Dictionary<int, MarketDataResult>();
-        foreach (var (id, task) in tasks)
+        Dictionary<int, MarketDataResult> results = new Dictionary<int, MarketDataResult>();
+        foreach ((int id, Task<MarketDataResult> task) in tasks)
         {
             try
             {
@@ -178,7 +178,7 @@ public class IbConnection : EWrapper, IDisposable
         }
 
         // Cancel any remaining subscriptions
-        foreach (var reqId in _mktDataRequests.Keys.ToList())
+        foreach (int reqId in _mktDataRequests.Keys.ToList())
         {
             _clientSocket.cancelMktData(reqId);
             _mktDataRequests.TryRemove(reqId, out _);
@@ -194,10 +194,10 @@ public class IbConnection : EWrapper, IDisposable
     {
         int orderId = GetNextOrderId();
         order.OrderId = orderId;
-        var collector = new OrderCollector(orderId, contract, order);
+        OrderCollector collector = new OrderCollector(orderId, contract, order);
         _orderRequests[orderId] = collector;
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+        using CancellationTokenSource cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
         cts.Token.Register(() =>
         {
             collector.Tcs.TrySetResult(new OrderResult
@@ -215,7 +215,7 @@ public class IbConnection : EWrapper, IDisposable
 
         _clientSocket.placeOrder(orderId, contract, order);
 
-        var result = await collector.Tcs.Task;
+        OrderResult result = await collector.Tcs.Task;
         _orderRequests.TryRemove(orderId, out _);
         return result;
     }
@@ -234,7 +234,7 @@ public class IbConnection : EWrapper, IDisposable
     /// </summary>
     public async Task<double> RequestUnderlyingPriceAsync(Contract contract, int timeoutSeconds = 15)
     {
-        var result = await RequestMarketDataSnapshotAsync(contract, timeoutSeconds);
+        MarketDataResult result = await RequestMarketDataSnapshotAsync(contract, timeoutSeconds);
         if (result.LastPrice > 0) return result.LastPrice;
         if (result.ClosePrice > 0) return result.ClosePrice;
         throw new InvalidOperationException($"Could not get price for {contract.Symbol}. " +
@@ -275,7 +275,7 @@ public class IbConnection : EWrapper, IDisposable
 
     public void tickPrice(int tickerId, int field, double price, TickAttrib attribs)
     {
-        if (_mktDataRequests.TryGetValue(tickerId, out var collector))
+        if (_mktDataRequests.TryGetValue(tickerId, out MarketDataCollector? collector))
         {
             switch (field)
             {
@@ -306,7 +306,7 @@ public class IbConnection : EWrapper, IDisposable
         double delta, double optPrice, double pvDividend, double gamma, double vega,
         double theta, double undPrice)
     {
-        if (_mktDataRequests.TryGetValue(tickerId, out var collector))
+        if (_mktDataRequests.TryGetValue(tickerId, out MarketDataCollector? collector))
         {
             // Field 13 = model-based computation (preferred)
             // Field 10 = bid computation, Field 11 = ask computation
@@ -330,7 +330,7 @@ public class IbConnection : EWrapper, IDisposable
 
     public void tickSnapshotEnd(int tickerId)
     {
-        if (_mktDataRequests.TryGetValue(tickerId, out var collector))
+        if (_mktDataRequests.TryGetValue(tickerId, out MarketDataCollector? collector))
         {
             collector.Tcs.TrySetResult(collector.Result);
         }
@@ -351,7 +351,7 @@ public class IbConnection : EWrapper, IDisposable
     public void securityDefinitionOptionParameter(int reqId, string exchange, int underlyingConId,
         string tradingClass, string multiplier, HashSet<string> expirations, HashSet<double> strikes)
     {
-        if (_chainRequests.TryGetValue(reqId, out var collector))
+        if (_chainRequests.TryGetValue(reqId, out OptionChainCollector? collector))
         {
             collector.Entries.Add(new OptionChainEntry
             {
@@ -367,9 +367,9 @@ public class IbConnection : EWrapper, IDisposable
 
     public void securityDefinitionOptionParameterEnd(int reqId)
     {
-        if (_chainRequests.TryGetValue(reqId, out var collector))
+        if (_chainRequests.TryGetValue(reqId, out OptionChainCollector? collector))
         {
-            var result = new OptionChainResult { Entries = collector.Entries };
+            OptionChainResult result = new OptionChainResult { Entries = collector.Entries };
             collector.Tcs.TrySetResult(result);
         }
     }
@@ -385,7 +385,7 @@ public class IbConnection : EWrapper, IDisposable
         _logger.LogInformation("Order {OrderId} status: {Status}, filled={Filled}, remaining={Remaining}, avgPrice={AvgPrice}",
             orderId, status, filled, remaining, avgFillPrice);
 
-        if (_orderRequests.TryGetValue(orderId, out var collector))
+        if (_orderRequests.TryGetValue(orderId, out OrderCollector? collector))
         {
             collector.LastStatus = status;
             collector.Filled = filled;
@@ -461,7 +461,7 @@ public class IbConnection : EWrapper, IDisposable
         // Fail relevant TCS if this is a fatal error for a request
         if (id >= 0)
         {
-            if (_mktDataRequests.TryGetValue(id, out var mktCollector))
+            if (_mktDataRequests.TryGetValue(id, out MarketDataCollector? mktCollector))
             {
                 // 354 = not subscribed, return what we have
                 if (errorCode == 354)
@@ -470,10 +470,10 @@ public class IbConnection : EWrapper, IDisposable
                     mktCollector.Tcs.TrySetException(new IbApiException(errorCode, errorMsg));
             }
 
-            if (_chainRequests.TryGetValue(id, out var chainCollector))
+            if (_chainRequests.TryGetValue(id, out OptionChainCollector? chainCollector))
                 chainCollector.Tcs.TrySetException(new IbApiException(errorCode, errorMsg));
 
-            if (_orderRequests.TryGetValue(id, out var orderCollector))
+            if (_orderRequests.TryGetValue(id, out OrderCollector? orderCollector))
             {
                 if (errorCode == 201) // Order rejected
                     orderCollector.Tcs.TrySetResult(new OrderResult
@@ -492,7 +492,7 @@ public class IbConnection : EWrapper, IDisposable
 
     public void contractDetails(int reqId, ContractDetails contractDetails)
     {
-        if (_contractDetailsRequests.TryGetValue(reqId, out var collector))
+        if (_contractDetailsRequests.TryGetValue(reqId, out ContractDetailsCollector? collector))
         {
             collector.Details.Add(contractDetails);
         }
@@ -500,7 +500,7 @@ public class IbConnection : EWrapper, IDisposable
 
     public void contractDetailsEnd(int reqId)
     {
-        if (_contractDetailsRequests.TryGetValue(reqId, out var collector))
+        if (_contractDetailsRequests.TryGetValue(reqId, out ContractDetailsCollector? collector))
         {
             collector.Tcs.TrySetResult(collector.Details);
         }
