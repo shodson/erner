@@ -26,7 +26,7 @@ public class OrderService
     /// </summary>
     public async Task<TradeResult> SellOptionAsync(Contract contract, int quantity, double midPrice, string expiry)
     {
-        var order = new Order
+        Order order = new Order
         {
             Action = "SELL",
             TotalQuantity = quantity,
@@ -49,9 +49,9 @@ public class OrderService
             }
         }
 
-        var result = await _connection.PlaceOrderAsync(contract, order);
+        OrderResult result = await _connection.PlaceOrderAsync(contract, order);
 
-        var tradeResult = new TradeResult
+        TradeResult tradeResult = new TradeResult
         {
             OrderId = result.OrderId,
             Status = result.Status,

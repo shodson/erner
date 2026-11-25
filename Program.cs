@@ -10,7 +10,7 @@ class Program
     static async Task<int> Main(string[] args)
     {
         // Parse CLI arguments
-        var cliArgs = ParseArguments(args);
+        Dictionary<string, string> cliArgs = ParseArguments(args);
 
         if (cliArgs.ContainsKey("help"))
         {
@@ -19,16 +19,16 @@ class Program
         }
 
         // Load appsettings.json as base config
-        var configBuilder = new ConfigurationBuilder()
+        IConfigurationBuilder configBuilder = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
             .AddJsonFile("appsettings.json", optional: true, reloadOnChange: false);
-        var configuration = configBuilder.Build();
+        IConfigurationRoot configuration = configBuilder.Build();
 
         // Build configs from appsettings.json defaults
-        var connectionConfig = new ConnectionConfig();
+        ConnectionConfig connectionConfig = new ConnectionConfig();
         configuration.GetSection("Connection").Bind(connectionConfig);
 
-        var tradingConfig = new TradingConfig();
+        TradingConfig tradingConfig = new TradingConfig();
         configuration.GetSection("Trading").Bind(tradingConfig);
 
         // Apply CLI overrides
@@ -38,9 +38,9 @@ class Program
         bool immediate = cliArgs.ContainsKey("now");
 
         // Set up logging
-        using var loggerFactory = LoggerFactory.Create(builder =>
+        using ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
         {
-            var logLevel = configuration.GetValue("Logging:LogLevel:Default", LogLevel.Information);
+            LogLevel logLevel = configuration.GetValue("Logging:LogLevel:Default", LogLevel.Information);
             if (cliArgs.ContainsKey("verbose"))
                 logLevel = LogLevel.Debug;
 
@@ -53,7 +53,7 @@ class Program
                 });
         });
 
-        var logger = loggerFactory.CreateLogger<Program>();
+        ILogger<Program> logger = loggerFactory.CreateLogger<Program>();
 
         // Log configuration
         logger.LogInformation("=== Erner SPX Options Seller ===");
@@ -80,17 +80,17 @@ class Program
         }
 
         // Build services
-        var connection = new IbConnection(loggerFactory.CreateLogger<IbConnection>());
-        var optionChainService = new OptionChainService(connection, tradingConfig,
+        IbConnection connection = new IbConnection(loggerFactory.CreateLogger<IbConnection>());
+        OptionChainService optionChainService = new OptionChainService(connection, tradingConfig,
             loggerFactory.CreateLogger<OptionChainService>());
-        var orderService = new OrderService(connection, tradingConfig,
+        OrderService orderService = new OrderService(connection, tradingConfig,
             loggerFactory.CreateLogger<OrderService>());
-        var orchestrator = new TradeOrchestrator(connection, optionChainService, orderService,
+        TradeOrchestrator orchestrator = new TradeOrchestrator(connection, optionChainService, orderService,
             connectionConfig, tradingConfig,
             loggerFactory.CreateLogger<TradeOrchestrator>());
 
         // Execute
-        using var cts = new CancellationTokenSource();
+        using CancellationTokenSource cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
@@ -121,7 +121,7 @@ class Program
     /// </summary>
     static Dictionary<string, string> ParseArguments(string[] args)
     {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, string> result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -158,13 +158,13 @@ class Program
         Dictionary<string, string> args)
     {
         // Connection overrides
-        if (args.TryGetValue("host", out var host))
+        if (args.TryGetValue("host", out string? host))
             conn.Host = host;
-        if (args.TryGetValue("client-id", out var clientId))
+        if (args.TryGetValue("client-id", out string? clientId))
             conn.ClientId = int.Parse(clientId);
 
         // Port resolution: explicit --port wins, then --paper/--live/--gateway flags
-        if (args.TryGetValue("port", out var port))
+        if (args.TryGetValue("port", out string? port))
         {
             conn.Port = int.Parse(port);
         }
@@ -182,25 +182,25 @@ class Program
         }
 
         // Trading overrides
-        if (args.TryGetValue("time", out var time))
+        if (args.TryGetValue("time", out string? time))
             trade.TradeTimeLocal = time;
-        if (args.TryGetValue("timezone", out var tz))
+        if (args.TryGetValue("timezone", out string? tz))
             trade.TradeTimeZone = tz;
-        if (args.TryGetValue("put-contracts", out var putQty))
+        if (args.TryGetValue("put-contracts", out string? putQty))
             trade.PutContracts = int.Parse(putQty);
-        if (args.TryGetValue("call-contracts", out var callQty))
+        if (args.TryGetValue("call-contracts", out string? callQty))
             trade.CallContracts = int.Parse(callQty);
-        if (args.TryGetValue("put-delta", out var putDelta))
+        if (args.TryGetValue("put-delta", out string? putDelta))
             trade.PutDeltaTarget = double.Parse(putDelta);
-        if (args.TryGetValue("call-delta", out var callDelta))
+        if (args.TryGetValue("call-delta", out string? callDelta))
             trade.CallDeltaTarget = double.Parse(callDelta);
-        if (args.TryGetValue("order-type", out var orderType))
+        if (args.TryGetValue("order-type", out string? orderType))
             trade.OrderType = orderType.ToUpperInvariant();
-        if (args.TryGetValue("symbol", out var symbol))
+        if (args.TryGetValue("symbol", out string? symbol))
             trade.Symbol = symbol;
-        if (args.TryGetValue("trading-class", out var tradingClass))
+        if (args.TryGetValue("trading-class", out string? tradingClass))
             trade.TradingClass = tradingClass;
-        if (args.TryGetValue("exchange", out var exchange))
+        if (args.TryGetValue("exchange", out string? exchange))
             trade.Exchange = exchange;
     }
 
